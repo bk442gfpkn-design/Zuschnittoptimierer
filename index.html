@@ -1,74 +1,339 @@
-<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Zuschnittoptimierer – Version 1.5</title><style>
-:root{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#172331;background:#f3f6f9}*{box-sizing:border-box}body{margin:0}main{max-width:1050px;margin:auto;padding:22px 14px 60px}h1{margin:0 0 6px;font-size:clamp(25px,4vw,36px)}.sub{color:#566779;margin:0 0 20px}.card{background:white;border-radius:15px;padding:20px;margin:15px 0;box-shadow:0 3px 14px #12243b10}h2{font-size:20px;margin:0 0 14px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}label{font-size:14px;font-weight:650;display:block;margin-bottom:5px}input{width:100%;padding:11px;border:1px solid #b9c6d1;border-radius:9px;font-size:17px}input:focus{outline:2px solid #2183c7}.row{display:grid;grid-template-columns:1fr 1fr 45px;gap:10px;align-items:end;margin-bottom:10px}button{border:0;border-radius:9px;padding:12px 15px;background:#12669e;color:white;font-size:15px;font-weight:700;cursor:pointer}button.secondary{background:#e8f0f7;color:#14577e}.delete{background:#fbe8e8;color:#a12626;padding:11px}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.hint{font-size:13px;color:#617082}.error{color:#a51e28;font-weight:650}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.metric{background:#edf5fb;border-radius:10px;padding:13px}.metric strong{display:block;font-size:25px;margin-top:5px}.metric span{font-size:13px;color:#506477}.pattern{border-top:1px solid #e2e8ee;padding:15px 0}.pattern:first-child{border-top:0}.pattern-title{font-weight:750;margin-bottom:8px}.bar{display:flex;width:100%;height:43px;border-radius:7px;overflow:hidden;border:1px solid #9fb3c2}.segment{display:flex;align-items:center;justify-content:center;min-width:0;white-space:nowrap;overflow:hidden;font-size:12px;font-weight:750;border-right:2px solid white;color:#14283a}.rest{background:#e1e7ed!important;color:#536575}.details{font-size:14px;color:#516477;margin-top:7px}.badge{display:inline-block;background:#e4f5e9;color:#146537;padding:4px 9px;border-radius:20px;font-size:12px;margin-left:8px}.warn{background:#fff4d9;padding:12px;border-radius:9px;color:#705018;font-size:14px;margin-top:12px}@media(max-width:650px){.metrics{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.card{padding:15px}.segment{font-size:10px}}
-</style></head><body><main><h1>📐 Zuschnittoptimierer</h1><p class="sub">Längen optimal auf Rohmaterial verteilen – inklusive Sägeschnittbreite.</p><section class="card"><h2>Rohmaterial</h2><div class="grid"><div><label for="stock">Länge des Rohmaterials (mm)</label><input id="stock" type="number" min="1" step="any" value="3000"></div><div><label for="kerf">Sägeblattbreite (mm)</label><input id="kerf" type="number" min="0" step="any" value="3"></div><div><label for="safety">Sicherheitszuschlag je Schnitt (mm)</label><input id="safety" type="number" min="0" step="any" value="1"></div></div><p class="hint" id="effective">Kalkulatorische Schnittbreite: 4 mm (3 mm Sägeblatt + 1 mm Reserve)</p><p class="hint">Optimierungsreihenfolge: möglichst wenige neue Rohlatten, dann Restlänge ohne das eine grösste Reststück minimieren. Nur notwendige Schnitte werden berechnet. Wenn das letzte Stück genau bis zum Ende reicht, entfällt der letzte Schnitt.</p></section><section class="card"><h2>Vorhandene Reststücke (optional)</h2><p class="hint">Länge und verfügbare Anzahl eintragen. Reststücke werden bevorzugt genutzt, um neue Rohlatten einzusparen.</p><div id="remnants"></div><button class="secondary" type="button" id="addRemnant">+ Reststücklänge hinzufügen</button></section><section class="card"><h2>Benötigte Teilstücke</h2><div id="parts"></div><div class="actions"><button class="secondary" type="button" id="add">+ Teilelänge hinzufügen</button><button type="button" id="calc">Zuschnitt berechnen</button></div><p id="error" class="error" role="alert"></p></section><section class="card" id="result" hidden><h2>Ergebnis <span id="quality"></span></h2><div class="metrics" id="metrics"></div><div id="notice"></div><p class="hint">Die Optimierung verwendet die kalkulatorische Schnittbreite (Sägeblatt + Sicherheitszuschlag). Angezeigte Reststücke sind konservativ berechnet; der Zuschlag ist kein physischer Sägeschnittverlust. „Bewerteter Rest“ = Summe der kalkulatorischen Reststücke minus das grösste.</p><h2 style="margin-top:22px">Schnittplan</h2><div id="patterns"></div><button class="secondary" onclick="window.print()">🖨️ Drucken</button></section></main><script>
-const $=id=>document.getElementById(id);const fmt=n=>Number(n.toFixed(3)).toLocaleString('de-CH',{maximumFractionDigits:3});
-function addRow(length='',count=''){const r=document.createElement('div');r.className='row';r.innerHTML='<div><label>Teilelänge (mm)</label><input class="length" type="number" min="0.001" step="any" value="'+length+'"></div><div><label>Anzahl</label><input class="count" type="number" min="1" step="1" value="'+count+'"></div><button class="delete" title="Entfernen" aria-label="Teilelänge entfernen">✕</button>';r.querySelector('button').onclick=()=>r.remove();$('parts').appendChild(r)}
-function addRemnantRow(length='',count=''){const r=document.createElement('div');r.className='row';r.innerHTML='<div><label>Reststücklänge (mm)</label><input class="rem-length" type="number" min="0.001" step="any" value="'+length+'"></div><div><label>Verfügbare Anzahl</label><input class="rem-count" type="number" min="1" step="1" value="'+count+'"></div><button class="delete" type="button" aria-label="Reststück entfernen">✕</button>';r.querySelector('button').onclick=()=>r.remove();$('remnants').appendChild(r)}$('addRemnant').onclick=()=>addRemnantRow();$('add').onclick=()=>addRow();addRow(1200,2);addRow(800,4);function updateEffective(){let k=Number($('kerf').value),v=Number($('safety').value);$('effective').textContent='Kalkulatorische Schnittbreite: '+(Number.isFinite(k+v)?fmt(k+v):'–')+' mm ('+fmt(Number.isFinite(k)?k:0)+' mm Sägeblatt + '+fmt(Number.isFinite(v)?v:0)+' mm Reserve)'}$('kerf').addEventListener('input',updateEffective);$('safety').addEventListener('input',updateEffective);updateEffective();
-// A pattern with n parts uses n cuts if it leaves a remainder, but only n-1 if it exactly fills the stock.
-function patternUsed(items,stock,kerf){let sum=items.reduce((s,x)=>s+x,0),n=items.length;let withLast=sum+n*kerf;let withoutLast=sum+(n-1)*kerf;if(Math.abs(withoutLast-stock)<=1e-7)return {used:stock,rest:0,cuts:n-1};if(withLast<=stock+1e-7)return {used:withLast,rest:Math.max(0,stock-withLast),cuts:n};return null}
-function patternsFor(types,stock,kerf,cap=80000){let out=[],counts=Array(types.length).fill(0),seen=0;function dfs(i,sum,n){if(seen>cap)return;if(i===types.length){if(!n)return;let full=sum+n*kerf;let exact=Math.abs(sum+(n-1)*kerf-stock)<=1e-7;if(full<=stock+1e-7||exact){out.push({counts:[...counts],used:exact?stock:full,rest:exact?0:Math.max(0,stock-full),cuts:exact?n-1:n});seen++}return}let max=Math.min(types[i].count,Math.floor((stock-sum-(n? n:0)*kerf+kerf+1e-7)/(types[i].length+kerf)));max=Math.max(0,max);for(let q=max;q>=0;q--){counts[i]=q;dfs(i+1,sum+q*types[i].length,n+q);if(seen>cap)break}counts[i]=0}dfs(0,0,0);return {out,truncated:seen>cap}}
-function heuristic(types,stock,kerf){let items=[];types.forEach((t,i)=>{for(let q=0;q<t.count;q++)items.push({length:t.length,type:i})});items.sort((a,b)=>b.length-a.length);let bins=[];for(let item of items){let best=-1,bestRest=Infinity;for(let i=0;i<bins.length;i++){let candidate=patternUsed([...bins[i].items.map(x=>x.length),item.length],stock,kerf);if(candidate&&candidate.rest<bestRest){best=i;bestRest=candidate.rest}}if(best<0)bins.push({items:[item]});else bins[best].items.push(item)}return bins.map(b=>({counts:types.map((_,i)=>b.items.filter(x=>x.type===i).length),...patternUsed(b.items.map(x=>x.length),stock,kerf)}))}
-// Exact branch-and-bound over all feasible patterns. Time/node budget prevents hanging on phones.
-function planScore(plan){let rests=plan.map(p=>p.rest),largest=Math.max(0,...rests),sum=rests.reduce((a,b)=>a+b,0);return {rated:sum-largest,largest,nonzero:rests.filter(r=>r>1e-7).length}}
-function betterPlan(a,b){if(a.length!==b.length)return a.length<b.length;let x=planScore(a),y=planScore(b);if(Math.abs(x.rated-y.rated)>1e-7)return x.rated<y.rated;return x.nonzero<y.nonzero}
-// Lexicographic search: first minimum number of bars, then sum of remainders excluding ONE largest remainder.
-function optimize(types,stock,kerf){let total=types.reduce((s,t)=>s+t.count,0),weight=types.reduce((s,t)=>s+t.length*t.count,0),generated=patternsFor(types,stock,kerf);let greedy=heuristic(types,stock,kerf),best=greedy,bestN=greedy.length;let lower=Math.ceil((weight-1e-7)/stock);if(generated.truncated||generated.out.length>14000||total>130)return {solution:best,exact:false,secondaryExact:false};let pats=generated.out.sort((a,b)=>b.used-a.used),remaining=types.map(t=>t.count),maxPieces=types.map((_,i)=>Math.max(1,...pats.map(p=>p.counts[i]))),nodes=0,deadline=performance.now()+2600,aborted=false;
-function dfs(path,phase){if(++nodes>220000||performance.now()>deadline){aborted=true;return}let need=remaining.reduce((a,b)=>a+b,0);if(!need){if(phase===1){if(path.length<bestN){bestN=path.length;best=path.slice()}}else if(path.length===bestN&&betterPlan(path,best))best=path.slice();return}let remWeight=remaining.reduce((s,q,i)=>s+q*types[i].length,0);let lb=Math.max(Math.ceil((remWeight-1e-7)/stock),...remaining.map((q,i)=>Math.ceil(q/maxPieces[i])));if(path.length+lb>(phase===1?bestN-1:bestN))return;let target=remaining.findIndex(q=>q>0);for(let p of pats){if(!p.counts[target]||p.counts.some((q,i)=>q>remaining[i]))continue;for(let i=0;i<remaining.length;i++)remaining[i]-=p.counts[i];path.push(p);dfs(path,phase);path.pop();for(let i=0;i<remaining.length;i++)remaining[i]+=p.counts[i];if(aborted)return}}
-if(bestN>lower)dfs([],1);let primaryExact=!aborted;if(!aborted){nodes=0;deadline=performance.now()+2600;dfs([],2)}return {solution:best,exact:primaryExact,secondaryExact:!aborted};}
-
-// Mixed stock: each remnant is limited in quantity; standard stock is unlimited.
-// Mixed stock: multi-start packing followed by local rearrangement.
-// Priority: fewest new bars, then minimum rated rest, then fewer remnants.
-function optimizeMixed(types,stock,kerf,remnants){
- const items=[];types.forEach((t,i)=>{for(let k=0;k<t.count;k++)items.push({length:t.length,type:i})});
- const supplies=remnants.flatMap((r,i)=>Array.from({length:Math.min(r.count,items.length)},()=>({length:r.length,source:'Reststück',sourceIndex:i})));
- function fit(b){return patternUsed(b.items.map(x=>x.length),b.length,kerf)}
- function score(bins){let r=bins.map(fit);if(r.some(x=>!x))return null;let rests=r.map(x=>x.rest),total=rests.reduce((a,b)=>a+b,0);return [bins.filter(x=>x.source==='Neu').length,total-Math.max(0,...rests),rests.filter(x=>x>1e-7).length,bins.length];}
- function cmp(a,b){for(let i=0;i<a.length;i++)if(Math.abs(a[i]-b[i])>1e-7)return a[i]<b[i]?-1:1;return 0}
- function copy(bins){return bins.map(b=>({...b,items:b.items.slice()}))}
- function pack(order,mode){let bins=[],used=Array(remnants.length).fill(0);for(let item of order){let options=[];bins.forEach((b,j)=>{let f=patternUsed([...b.items.map(x=>x.length),item.length],b.length,kerf);if(f)options.push({j,rest:f.rest})});if(options.length){options.sort((a,b)=>mode%3===1?b.rest-a.rest:a.rest-b.rest);bins[options[0].j].items.push(item);continue}let available=remnants.map((r,i)=>({...r,i})).filter(r=>used[r.i]<r.count&&patternUsed([item.length],r.length,kerf));available.sort((a,b)=>mode%3===2?b.length-a.length:a.length-b.length);if(available.length){let r=available[0];used[r.i]++;bins.push({length:r.length,source:'Reststück',sourceIndex:r.i,items:[item]})}else if(patternUsed([item.length],stock,kerf))bins.push({length:stock,source:'Neu',sourceIndex:-1,items:[item]});else return null}return bins}
- let best=null,bestScore=null;
- function consider(b){let sc=score(b);if(sc&&(!bestScore||cmp(sc,bestScore)<0)){best=copy(b);bestScore=sc}}
- // Deterministic pseudo-random generator for reproducible results.
- let seed=712367;function rand(){seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296}
- const ordered=items.slice().sort((a,b)=>b.length-a.length);
- for(let attempt=0;attempt<Math.min(90,12+items.length*3);attempt++){
-  let order=ordered.slice();if(attempt%3===1)order.reverse();if(attempt%3===2)order.sort(()=>rand()-.5);
-  let bins=pack(order,attempt);if(!bins)continue;
-  // Local improvement: swaps, moves, and removing unnecessary new bars.
-  for(let step=0;step<Math.min(1100,150+items.length*35);step++){
-   let current=score(bins),candidate=null,cs=null;
-   const evaluate=(trial)=>{trial=trial.filter(b=>b.items.length);let sc=score(trial);if(sc&&cmp(sc,current)<0&&(!cs||cmp(sc,cs)<0)){candidate=trial;cs=sc}};
-   if(step<items.length*3){ // exhaustive pairwise exchanges for small jobs
-    let possibilities=[];for(let i=0;i<bins.length;i++)for(let j=i+1;j<bins.length;j++)for(let x=0;x<bins[i].items.length;x++)for(let y=0;y<bins[j].items.length;y++)possibilities.push([i,j,x,y]);
-    if(possibilities.length){let [i,j,x,y]=possibilities[step%possibilities.length];let t=copy(bins);[t[i].items[x],t[j].items[y]]=[t[j].items[y],t[i].items[x]];evaluate(t)}
-   }
-   for(let z=0;z<18;z++){
-    let i=Math.floor(rand()*bins.length),j=Math.floor(rand()*bins.length);if(i===j||!bins[i].items.length)continue;
-    let t=copy(bins),x=Math.floor(rand()*t[i].items.length);
-    if(rand()<.55&&t[j].items.length){let y=Math.floor(rand()*t[j].items.length);[t[i].items[x],t[j].items[y]]=[t[j].items[y],t[i].items[x]]}
-    else t[j].items.push(t[i].items.splice(x,1)[0]);
-    evaluate(t)
-   }
-   if(candidate){bins=candidate;consider(bins)}
-  }
-  consider(bins)
- }
- // Additional optimization: fixed-bin exact assignment for small jobs, allowing
- // temporary worsening moves that hill climbing cannot cross.
- if(best&&items.length<=28&&best.length<=9){
-  const slots=best.map(b=>({length:b.length,source:b.source,sourceIndex:b.sourceIndex,items:[]}));
-  let remaining=types.map(t=>t.count),nodes=0,limit=180000,deadline=performance.now()+1100;
-  const itemOrder=items.slice().sort((a,b)=>b.length-a.length);
-  function dfs(k){if(++nodes>limit||performance.now()>deadline)return;if(k===itemOrder.length){consider(slots);return}
-   let item=itemOrder[k],prev=new Set();for(let j=0;j<slots.length;j++){let b=slots[j],signature=b.length+'|'+b.source+'|'+b.items.map(x=>x.type).sort().join(',');if(prev.has(signature))continue;prev.add(signature);
-    if(!patternUsed([...b.items.map(x=>x.length),item.length],b.length,kerf))continue;
-    b.items.push(item);dfs(k+1);b.items.pop();if(nodes>limit||performance.now()>deadline)return;
-   }
-  }
-  dfs(0)
- }
- return {solution:(best||[]).map(b=>({counts:types.map((_,i)=>b.items.filter(x=>x.type===i).length),stockLength:b.length,source:b.source,...fit(b)})),exact:false,secondaryExact:false};
+<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Plattenzuschnittoptimierer V1.3</title><style>
+:root{font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif;color:#1e293b;background:#f3f6fa}*{box-sizing:border-box}body{margin:0}main{max-width:1120px;margin:25px auto;padding:0 16px 40px}h1{margin:0 0 6px;font-size:1.65rem}h2{font-size:1.12rem;margin:0 0 12px}.sub{color:#64748b;margin:0 0 20px}.card{background:white;border:1px solid #dbe3ec;border-radius:13px;padding:18px;margin-bottom:15px;box-shadow:0 2px 9px #1f293710}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}label{display:block;font-size:.83rem;font-weight:650;margin-bottom:5px}input{width:100%;min-width:0;padding:10px;border:1px solid #cbd5e1;border-radius:7px;font:inherit}input[type=checkbox]{width:18px;height:18px;accent-color:#2563eb}.entry{display:grid;grid-template-columns:1fr 1fr .65fr auto;gap:8px;align-items:end;margin:8px 0}.entry.part{grid-template-columns:1fr 1fr .6fr .6fr auto}.entry.stock{grid-template-columns:1fr 1fr 1.15fr .7fr auto}.stock select{width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:7px;font:inherit}.entry.stock .stockqty.hidden{display:none}.check{display:flex;gap:7px;align-items:center;padding-bottom:11px;white-space:nowrap;font-size:.85rem}.btn{background:#2563eb;border:0;border-radius:8px;padding:11px 15px;color:white;font-weight:700;cursor:pointer;font:inherit}.btn.secondary{background:#e7efff;color:#1d4ed8}.btn.danger{background:#fce8e8;color:#991b1b}.btn:disabled{opacity:.5;cursor:default}.actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:13px}.note{font-size:.84rem;color:#64748b}.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}.stat{background:#f1f5f9;border-radius:9px;padding:12px}.stat strong{font-size:1.55rem;display:block}.stat span{font-size:.76rem;color:#475569}.board{margin:17px 0 25px;border-top:1px solid #e2e8f0;padding-top:15px}.board-head{display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap}.drawing{max-width:100%;border:1px solid #94a3b8;border-radius:3px;background:#f1f5f9;display:block;margin:12px 0}.legend{display:flex;gap:15px;flex-wrap:wrap;font-size:.8rem;color:#475569}.swatch{display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:5px}.steps{padding-left:23px;line-height:1.7}.steps li{padding:3px 0}.stepnav{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0}.stepnav button{padding:7px 12px}.stepview{border:1px solid #cbd5e1;border-radius:8px;padding:12px;background:#f8fafc}.stepview svg{width:100%;max-width:780px;display:block}.stepcaption{font-size:.88rem;margin:8px 0;color:#334155}.error{color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;padding:12px;border-radius:8px}.ok{color:#166534}.hidden{display:none}@media(max-width:700px){.grid,.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.entry.part{grid-template-columns:1fr 1fr .6fr;}.entry.part .check{grid-column:1/3}.entry.part .danger{grid-column:3}.entry{grid-template-columns:1fr 1fr .65fr auto}.entry.stock{grid-template-columns:1fr 1fr}.entry.stock .danger{justify-self:start}main{padding:0 10px} .card{padding:13px}}@media print{body{background:white}main{max-width:none;margin:0}.controls,.actions{display:none!important}.card{box-shadow:none;break-inside:avoid}.board{break-inside:avoid}.drawing{max-height:430px}}
+</style></head><body><main><h1>🪚 Plattenzuschnittoptimierer</h1><p class="sub">Beta · Exakte Mehrplattenoptimierung · Oberfläche der V1.3</p>
+<section class="card controls"><h2>1. Verfügbare Rohplatten</h2><div id="stocks"></div><button class="btn secondary" type="button" id="addStock">+ Rohplattenformat hinzufügen</button><div class="grid two" style="margin-top:15px"><div><label for="kerf">Sägeblattbreite (mm)</label><input id="kerf" type="text" inputmode="decimal" value="3"></div><div><label for="safety">Sicherheit pro Schnitt (mm)</label><input id="safety" type="text" inputmode="decimal" value="1"></div></div><p class="note">Jedes Rohplattenformat kann unbegrenzt oder mit einer festen Stückzahl verfügbar sein. Die Schnittbreite gilt für alle Formate und Reststücke.</p></section>
+<section class="card controls"><h2>2. Vorhandene Plattenreste (optional)</h2><div id="rests"></div><button class="btn secondary" type="button" id="addRest">+ Plattenrest hinzufügen</button></section>
+<section class="card controls"><h2>3. Benötigte Zuschnitte</h2><div id="parts"></div><button class="btn secondary" type="button" id="addPart">+ Teilegrösse hinzufügen</button><p class="note">„Drehbar“ bedeutet: Das Teil darf bei der Anordnung um 90° gedreht werden. Bei Maserung oder Dekorrichtung ausschalten.</p><div class="grid two" style="margin-top:14px"><div><label for="priority">Optimierungsziel</label><select id="priority" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:7px;font:inherit"><option value="material">Neue Rohplatten vermeiden</option><option value="handling">Weniger Platten bearbeiten</option></select></div><div><label for="searchDepth">Suchintensität</label><select id="searchDepth" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:7px;font:inherit"><option value="normal">Normal</option><option value="deep" selected>Gründlich (langsamer)</option></select></div></div><div style="margin-top:14px"><label class="check"><input type="checkbox" id="allowExtra"> Zusätzliche Platten für besser nutzbare Reststücke zulassen</label><p class="note">Bei „Weniger Platten bearbeiten“ darf die Suche mehr Platten verwenden, wenn sich die Reststückqualität ausreichend verbessert. Bei „Neue Rohplatten vermeiden“ bleibt die Anzahl neuer Platten vorrangig.</p></div><div class="grid two" style="margin-top:12px"><div><label for="seconds">Maximale Rechenzeit (Sekunden)</label><input id="seconds" type="number" min="1" max="3600" step="1" value="600"></div><div><label class="check" style="margin-top:24px"><input type="checkbox" id="preferRests" checked> Vorhandene Reststücke bevorzugen</label></div></div><div class="actions"><button class="btn" id="calculate">Zuschnitt optimieren</button><button class="btn secondary" type="button" id="stop" disabled>Abbrechen</button><button class="btn secondary" onclick="window.print()">Drucken</button></div></section>
+<section id="results" class="card hidden"><h2>4. Ergebnis</h2><p id="solverStatus" class="note" role="status"></p><div id="summary"></div><div id="boards"></div></section>
+</main><script>
+'use strict';
+const $=id=>document.getElementById(id),fmt=n=>Number(n.toFixed(2)).toLocaleString('de-CH',{maximumFractionDigits:2}),EPS=1e-7;
+const decimal=v=>{const s=String(v).trim().replace(',', '.');return s===''?NaN:Number(s)};
+let nextId=0;
+function addStock(data={}){const id=++nextId,row=document.createElement('div');row.className='entry stock';row.dataset.id=id;for(const [key,label,value] of [['w','Breite (mm)',data.w??''],['h','Länge (mm)',data.h??'']]){const wrap=document.createElement('div'),lab=document.createElement('label'),inp=document.createElement('input');lab.textContent=label;inp.type='text';inp.inputMode='decimal';inp.value=value;inp.dataset.key=key;wrap.append(lab,inp);row.append(wrap)}const modeWrap=document.createElement('div'),modeLab=document.createElement('label'),sel=document.createElement('select');modeLab.textContent='Verfügbarkeit';sel.dataset.key='mode';sel.innerHTML='<option value="unlimited">Unbegrenzt</option><option value="limited">Begrenzt</option>';sel.value=data.mode||'unlimited';modeWrap.append(modeLab,sel);row.append(modeWrap);const qtyWrap=document.createElement('div'),qtyLab=document.createElement('label'),qty=document.createElement('input');qtyWrap.className='stockqty';qtyLab.textContent='Anzahl';qty.type='number';qty.min='0';qty.step='1';qty.value=data.qty??'1';qty.dataset.key='qty';qtyWrap.append(qtyLab,qty);row.append(qtyWrap);const toggle=()=>qtyWrap.classList.toggle('hidden',sel.value==='unlimited');sel.onchange=toggle;toggle();const del=document.createElement('button');del.className='btn danger';del.type='button';del.textContent='✕';del.title='Format entfernen';del.onclick=()=>row.remove();row.append(del);$('stocks').append(row)}
+$('addStock').onclick=()=>addStock({mode:'limited',qty:1});addStock({w:2500,h:1250,mode:'unlimited'});
+function addRow(type,data={}){
+ const id=++nextId, row=document.createElement('div');row.className='entry '+(type==='part'?'part':'');row.dataset.id=id;
+ const fields=type==='part'?[['w','Breite',data.w??800],['h','Länge',data.h??600],['q','Anzahl',data.q??3]]:[['w','Breite',data.w??1800],['h','Länge',data.h??900],['q','Anzahl',data.q??1]];
+ for(const [key,label,value] of fields){const wrap=document.createElement('div');const lab=document.createElement('label');lab.textContent=label;lab.htmlFor=`${type}${id}${key}`;const inp=document.createElement('input');inp.type=key==='q'?'number':'text';if(key==='q'){inp.min='1';inp.step='1';}else inp.inputMode='decimal';inp.value=value;inp.id=lab.htmlFor;inp.dataset.key=key;wrap.append(lab,inp);row.append(wrap)}
+ if(type==='part'){const wrap=document.createElement('label');wrap.className='check';const cb=document.createElement('input');cb.type='checkbox';cb.checked=data.rot??true;cb.dataset.key='rot';wrap.append(cb,document.createTextNode('90° drehbar'));row.append(wrap)}
+ const del=document.createElement('button');del.className='btn danger';del.textContent='✕';del.title='Zeile entfernen';del.type='button';del.onclick=()=>row.remove();row.append(del);$(type==='part'?'parts':'rests').append(row)
 }
-$('calc').onclick=()=>{let err=$('error');err.textContent='';$('result').hidden=true;let stock=Number($('stock').value),blade=Number($('kerf').value),safety=Number($('safety').value),kerf=blade+safety,rows=[...document.querySelectorAll('#parts .row')],types=[];if(!(stock>0)||!Number.isFinite(stock)||!(blade>=0)||!Number.isFinite(blade)||!(safety>=0)||!Number.isFinite(safety)||!Number.isFinite(kerf)){err.textContent='Bitte gültige Werte für Rohmaterial, Sägeblattbreite und Sicherheitszuschlag (jeweils mindestens 0 mm) eingeben.';return}for(let r of rows){let l=Number(r.querySelector('.length').value),c=Number(r.querySelector('.count').value);if(!(l>0)||!Number.isFinite(l)||!Number.isInteger(c)||c<1){err.textContent='Bitte alle Teilelängen und Stückzahlen korrekt eingeben.';return}if(l>stock+1e-7){err.textContent='Ein Teilstück ist länger als das Rohmaterial.';return}if(l<stock-1e-7&&l+kerf>stock+1e-7){err.textContent='Teilstück '+fmt(l)+' mm ist nicht zuschneidbar: Für den notwendigen Trennschnitt fehlen '+fmt(l+kerf-stock)+' mm Rohmaterial.';return}types.push({length:l,count:c})}if(!types.length){err.textContent='Bitte mindestens eine Teilelänge hinzufügen.';return}if(types.reduce((s,t)=>s+t.count,0)>1500){err.textContent='Maximal 1500 Teilstücke pro Berechnung.';return}let merged=new Map();for(let t of types)merged.set(t.length,(merged.get(t.length)||0)+t.count);types=[...merged].map(([length,count])=>({length,count})).sort((a,b)=>b.length-a.length);let remnants=[];for(const r of document.querySelectorAll('#remnants .row')){let l=Number(r.querySelector('.rem-length').value),c=Number(r.querySelector('.rem-count').value);if(!(l>0)||!Number.isFinite(l)||!Number.isSafeInteger(c)||c<1){err.textContent='Bitte Reststücklängen und verfügbare Anzahlen korrekt eingeben.';return}remnants.push({length:l,count:c})}let mixed=remnants.length>0;let {solution,exact,secondaryExact}=mixed?optimizeMixed(types,stock,kerf,remnants):optimize(types,stock,kerf);if(!solution.length){err.textContent='Für die Eingaben konnte kein Schnittplan erstellt werden.';return}if(!mixed)solution=solution.map(p=>({...p,stockLength:stock,source:'Neu'}));let totalCuts=solution.reduce((s,p)=>s+p.cuts,0),partsLength=types.reduce((s,t)=>s+t.length*t.count,0),waste=solution.reduce((a,p)=>a+p.stockLength,0)-partsLength,cutLoss=totalCuts*blade,safetyTotal=totalCuts*safety,offcuts=Math.max(0,waste-cutLoss-safetyTotal),util=100*partsLength/(solution.reduce((a,p)=>a+p.stockLength,0));$('quality').innerHTML=mixed?'<span class="badge" style="background:#fff2d5;color:#795415">Zuschnittvorschlag (nicht optimalitätsbewiesen)</span>':exact&&secondaryExact?'<span class="badge">Optimierung nachgewiesen</span>':exact?'<span class="badge">Minimale Rohmaterialanzahl nachgewiesen</span>':'<span class="badge" style="background:#fff2d5;color:#795415">Guter Zuschnittvorschlag</span>';$('metrics').innerHTML=[['Neue Rohlatten',solution.filter(p=>p.source==='Neu').length],['Verwendete Reststücke',solution.filter(p=>p.source==='Reststück').length],['Rohmaterial-Stücke gesamt',solution.length],['Materialausnutzung',fmt(util)+' %'],['Reststücke gesamt (kalk.)',fmt(offcuts)+' mm'],['Sägeschnittverlust',fmt(cutLoss)+' mm'],['Eingeplante Sicherheitsreserve',fmt(safetyTotal)+' mm'],['Grösstes Reststück',fmt(planScore(solution).largest)+' mm'],['Bewerteter Rest',fmt(planScore(solution).rated)+' mm']].map(([k,v])=>'<div class="metric"><span>'+k+'</span><strong>'+v+'</strong></div>').join('');$('notice').innerHTML=mixed?'<div class="warn">Mit unterschiedlichen Reststücken wird ein schneller Näherungsalgorithmus verwendet. Die optimale Lösung ist nicht mathematisch nachgewiesen.</div>':exact&&secondaryExact?'': '<div class="warn">'+(exact?'Die minimale Rohmaterialanzahl ist bewiesen. Die optimale Reststückverteilung konnte innerhalb des Rechenlimits nicht vollständig nachgewiesen werden.':'Die mathematische Optimalität konnte innerhalb des Rechenlimits nicht vollständig nachgewiesen werden.')+'</div>'; let groups=new Map();for(let p of solution){let key=p.source+'|'+p.stockLength+'|'+p.counts.join(',');if(!groups.has(key))groups.set(key,{p,n:0});groups.get(key).n++}let html='';for(let {p,n} of groups.values()){let items=[];p.counts.forEach((q,i)=>{for(let j=0;j<q;j++)items.push(types[i].length)});let segs=items.map((l,i)=>'<div class="segment" style="width:'+100*l/p.stockLength+'%;background:hsl('+(195+i*53)%360+' 65% 75%)" title="'+fmt(l)+' mm">'+(l/p.stockLength>.075?fmt(l):'')+'</div>').join('');if(p.rest>1e-7)segs+='<div class="segment rest" style="width:'+100*p.rest/p.stockLength+'%" title="Rest '+fmt(p.rest)+' mm">'+(p.rest/p.stockLength>.075?fmt(p.rest):'')+'</div>';html+='<div class="pattern"><div class="pattern-title">'+n+' × '+(p.source==='Reststück'?'vorhandenes Reststück':'neue Rohlatte')+' à '+fmt(p.stockLength)+' mm</div><div class="bar">'+segs+'</div><div class="details">'+items.map(l=>fmt(l)+' mm').join(' + ')+' · '+p.cuts+' Schnitt(e) · Reststück '+fmt(p.rest)+' mm</div></div>'}$('patterns').innerHTML=html;$('result').hidden=false;$('result').scrollIntoView({behavior:'smooth',block:'start'})};
+$('addPart').onclick=()=>addRow('part',{w:'',h:'',q:1});$('addRest').onclick=()=>addRow('rest',{w:'',h:'',q:1});
+function getRows(type){return [...$(type==='part'?'parts':'rests').children].map((r,i)=>{const v={};r.querySelectorAll('input').forEach(e=>v[e.dataset.key]=e.type==='checkbox'?e.checked:decimal(e.value));v.id=i+1;return v})}
+function readInput(){const stocks=[...$('stocks').children].map((row,i)=>{const get=k=>row.querySelector(`[data-key="${k}"]`);return {id:i+1,w:decimal(get('w').value),h:decimal(get('h').value),mode:get('mode').value,qty:Number(get('qty').value)}}),kerf=decimal($('kerf').value),safety=decimal($('safety').value),rests=getRows('rest'),parts=getRows('part');if(!stocks.length)throw Error('Bitte mindestens ein Rohplattenformat erfassen.');for(const s of stocks)if(!(s.w>0&&s.h>0)||s.mode==='limited'&&(!Number.isInteger(s.qty)||s.qty<0))throw Error('Rohplatten: gültige Abmessungen und eine nichtnegative ganze Anzahl eingeben.');if(!Number.isFinite(kerf)||!Number.isFinite(safety)||kerf<0||safety<0)throw Error('Schnittbreite und Sicherheitszuschlag müssen mindestens 0 sein.');if(!parts.length)throw Error('Bitte mindestens ein Teilstück eingeben.');for(const r of [...rests,...parts])if(!(r.w>0&&r.h>0&&Number.isInteger(r.q)&&r.q>0))throw Error('Alle Abmessungen müssen positiv und Stückzahlen positive ganze Zahlen sein.');const count=parts.reduce((s,p)=>s+p.q,0);if(count>140)throw Error('Diese Version unterstützt maximal 140 einzelne Zuschnitte pro Berechnung.');if(rests.reduce((s,r)=>s+r.q,0)>100)throw Error('Bitte maximal 100 vorhandene Plattenreste erfassen.');return {stocks,kerf,safety,k:kerf+safety,rests,parts,priority:$('priority').value,deep:$('searchDepth').value==='deep',allowExtra:$('allowExtra').checked}}
+function renderTree(tree,x,y,shapes,cuts,partInfo,patternId,labelScale){
+ if(tree.type==='part'){
+  const source=partInfo[tree.id]||{};
+  const color=['#93c5fd','#86efac','#fcd34d','#fca5a5'][tree.index%4];
+  shapes.push(`<rect x="${x}" y="${y}" width="${tree.w}" height="${tree.h}" fill="${color}" stroke="#334155" stroke-width=".8"/>`);
+  if(source.rot===false)shapes.push(`<rect x="${x}" y="${y}" width="${tree.w}" height="${tree.h}" fill="url(#${patternId})" pointer-events="none"/>`);
+  const size=Math.min(21*labelScale,tree.w/3.5,tree.h/3.5);
+  shapes.push(`<text x="${x+tree.w/2}" y="${y+tree.h/2-size*.15}" text-anchor="middle" font-size="${size}" font-weight="700" fill="#152238">${exactEsc(tree.id)}</text>`);
+  shapes.push(`<text x="${x+tree.w/2}" y="${y+tree.h/2+size*1.1}" text-anchor="middle" font-size="${size*.82}" fill="#152238">${fmt(tree.w)} × ${fmt(tree.h)} mm</text>`);
+  return;
+ }
+ renderTree(tree.a,x,y,shapes,cuts,partInfo,patternId,labelScale);
+ if(tree.type==='v'){
+  const at=x+tree.a.w;
+  cuts.push(`<line x1="${at}" y1="${y}" x2="${at}" y2="${y+tree.h}" stroke="#dc2626" stroke-width="1" stroke-dasharray="3 2"/>`);
+  renderTree(tree.b,x+tree.w-tree.b.w,y,shapes,cuts,partInfo,patternId,labelScale);
+ }else{
+  const at=y+tree.a.h;
+  cuts.push(`<line x1="${x}" y1="${at}" x2="${x+tree.w}" y2="${at}" stroke="#dc2626" stroke-width="1" stroke-dasharray="3 2"/>`);
+  renderTree(tree.b,x,y+tree.h-tree.b.h,shapes,cuts,partInfo,patternId,labelScale);
+ }
+}
+// Zuerst die eigentlichen Trennschnitte; Randbesaeumung erst an den Einzelteilen.
+// Alle Schnitte verlaufen ueber die jeweils aktuelle Teilplatte.
+function cutStepObjects(t,x=0,y=0,k=0,out=[],rw=t.w,rh=t.h){
+ const f=n=>fmt(n);
+ if(t.type==='part'){
+  if(rw>t.w+EPS){out.push({label:`Besäumen längs: Teilplatte ${f(rw)} × ${f(rh)} mm, bei x=${f(x+t.w)} mm (lokal ${f(t.w)} mm), Schnittlänge ${f(rh)} mm; Schnittzone ${f(k)} mm`,x1:x+t.w,y1:y,x2:x+t.w,y2:y+rh});rw=t.w;}
+  if(rh>t.h+EPS){out.push({label:`Besäumen quer: Teilplatte ${f(rw)} × ${f(rh)} mm, bei y=${f(y+t.h)} mm (lokal ${f(t.h)} mm), Schnittlänge ${f(rw)} mm; Schnittzone ${f(k)} mm`,x1:x,y1:y+t.h,x2:x+rw,y2:y+t.h});}
+  return out;
+ }
+ if(t.type==='v'){
+  const at=x+t.a.w;
+  out.push({label:`Längsschnitt: Teilplatte ${f(rw)} × ${f(rh)} mm, bei x=${f(at)} mm (lokal ${f(t.a.w)} mm), Schnittlänge ${f(rh)} mm; Schnittzone ${f(k)} mm`,x1:at,y1:y,x2:at,y2:y+rh});
+  cutStepObjects(t.a,x,y,k,out,t.a.w,rh);
+  cutStepObjects(t.b,at+k,y,k,out,rw-t.a.w-k,rh);
+ }else{
+  const at=y+t.a.h;
+  out.push({label:`Querschnitt: Teilplatte ${f(rw)} × ${f(rh)} mm, bei y=${f(at)} mm (lokal ${f(t.a.h)} mm), Schnittlänge ${f(rw)} mm; Schnittzone ${f(k)} mm`,x1:x,y1:at,x2:x+rw,y2:at});
+  cutStepObjects(t.a,x,y,k,out,rw,t.a.h);
+  cutStepObjects(t.b,x,at+k,k,out,rw,rh-t.a.h-k);
+ }
+ return out;
+}
+// Exakte Berechnung in Zehntelmillimetern (0,1 mm).
+// Mehr als eine Nachkommastelle wird abgewiesen, niemals gerundet.
+function scaleExactInput(input){
+ const values=[input.kerf,input.safety,...[...input.parts,...input.stocks,...input.rests].flatMap(x=>[x.w,x.h])];
+ if(values.some(v=>!Number.isFinite(v)||Math.abs(v)>1000000))throw Error('Ungültige oder zu grosse Abmessung.');
+ const factor=10;
+ if(values.some(v=>Math.abs(v*factor-Math.round(v*factor))>1e-7))
+  throw Error('Bitte maximal eine Nachkommastelle (0,1 mm) eingeben. Werte werden nicht gerundet.');
+ const scaled={...input,kerf:Math.round(input.kerf*factor),safety:Math.round(input.safety*factor)};
+ for(const kind of ['parts','stocks','rests'])scaled[kind]=input[kind].map(v=>({...v,w:Math.round(v.w*factor),h:Math.round(v.h*factor)}));
+ return {scaled,factor};
+}
+function unscaleExactResult(result,factor){
+ if(factor===1)return result;
+ const dims=obj=>{obj.w/=factor;obj.h/=factor;};
+ const tree=t=>{dims(t);if(t.a)tree(t.a);if(t.b)tree(t.b);};
+ for(const p of result.placements||[]){dims(p.board);tree(p.tree);}
+ if(result.objective)for(const k of ['boardArea','partArea','restPartArea'])if(Number.isFinite(result.objective[k]))result.objective[k]/=factor*factor;
+ return result;
+}
+
+let exactWorker=null;
+function exactEsc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function showExact(r,input){
+ $('results').classList.remove('hidden');
+ const statuses={optimal:'Globales Optimum mathematisch nachgewiesen',feasible:'Gültiger Schnittplan – Optimalität nicht bewiesen',unknown:'Zeitlimit erreicht – kein Optimalitätsnachweis',impossible:'Nachweislich keine zulässige Lösung',unsupported:'Eingabe nicht unterstützt'};
+ $('solverStatus').textContent=statuses[r.status]||r.status;
+ $('solverStatus').className=r.status==='optimal'?'ok':'note';
+ if(r.reason)$('solverStatus').textContent+=': '+r.reason;
+ let o='';if(r.objective){const a=r.objective;o=`<div class="stats"><div class="stat"><strong>${a.boardCount}</strong><span>Verwendete Platten</span></div><div class="stat"><strong>${a.newStockCount}</strong><span>Neue Rohplatten</span></div><div class="stat"><strong>${fmt(a.boardArea/1e6)} m²</strong><span>Eingesetzte Fläche</span></div><div class="stat"><strong>${fmt(a.partArea/a.boardArea*100)} %</strong><span>Flächenausnutzung</span></div></div>`;}
+ $('summary').innerHTML=o;
+ $('boards').innerHTML='';
+ const partInfo=Object.fromEntries(input.parts.map(p=>[p.id,p]));
+ for(const [i,p] of (r.placements||[]).entries()){
+  const b=p.board,shapes=[],cuts=[],patternId=`fixedHatch${i}`;
+  const labelScale=Math.max(b.w/850,b.h/560);
+  renderTree(p.tree,0,0,shapes,cuts,partInfo,patternId,labelScale);
+  const section=document.createElement('div');section.className='board';
+  const steps=cutStepObjects(p.tree,0,0,(input.kerf||0)+(input.safety||0),[],b.w,b.h);
+  const hatchStep=12*labelScale;
+  const defs=`<defs><pattern id="${patternId}" width="${hatchStep}" height="${hatchStep}" patternUnits="userSpaceOnUse"><path d="M0 ${hatchStep/2} H${hatchStep}" stroke="#334155" stroke-opacity=".6" stroke-width="${1.5*labelScale}"/></pattern></defs>`;
+  section.innerHTML=`<div class="board-head"><h2>Platte ${i+1} · ${b.kind==='rest'?'Vorhandenes Reststück':'Neue Rohplatte'} · ${fmt(b.w)} × ${fmt(b.h)} mm</h2><span class="note">${p.partIndices.length} Teile</span></div><svg class="drawing" viewBox="0 0 ${b.w} ${b.h}" style="width:100%;max-width:850px" xmlns="http://www.w3.org/2000/svg">${defs}<rect width="${b.w}" height="${b.h}" fill="#e8edf2"/>${shapes.join('')}${cuts.join('')}</svg><div class="legend"><span style="display:inline-flex;align-items:center;gap:6px"><span style="width:26px;height:17px;border:1px solid #64748b;background:repeating-linear-gradient(to bottom,#cbd5e1 0px,#cbd5e1 5px,#475569 6px,#cbd5e1 7px)"></span> Waagerechte Schraffur: nicht drehbar</span><span>Rote gestrichelte Linien: Trennschnitte</span></div><div class="stepview"><strong>Schnittfolge – Schritt für Schritt</strong><div class="stepnav"><button type="button" class="btn secondary prev-step">← Vorher</button><span class="step-counter" aria-live="polite"></span><button type="button" class="btn secondary next-step">Weiter →</button></div><svg class="step-drawing" viewBox="0 0 ${b.w} ${b.h}" xmlns="http://www.w3.org/2000/svg">${defs}<rect width="${b.w}" height="${b.h}" fill="#e8edf2"/>${shapes.join('')}<g class="step-lines"></g></svg><p class="stepcaption" aria-live="polite"></p></div><details><summary><strong>Alle Schnittanweisungen (${steps.length})</strong></summary><ol class="steps">${steps.map(s=>`<li>${exactEsc(s.label)}</li>`).join('')}</ol></details>`;
+  $('boards').append(section);
+  let current=0;
+  const update=()=>{
+   section.querySelector('.step-counter').textContent=`${current} / ${steps.length}`;
+   section.querySelector('.prev-step').disabled=current===0;
+   section.querySelector('.next-step').disabled=current===steps.length;
+   section.querySelector('.stepcaption').textContent=current===0?'Ausgangsplatte – mit «Weiter» den ersten Schnitt anzeigen.':`Schritt ${current}: ${steps[current-1].label}`;
+   section.querySelector('.step-lines').innerHTML=steps.slice(0,current).map((s,j)=>`<line x1="${s.x1}" y1="${s.y1}" x2="${s.x2}" y2="${s.y2}" stroke="${j===current-1?'#dc2626':'#64748b'}" stroke-width="${j===current-1?Math.max(2,Math.min(b.w,b.h)/160):1.1}" stroke-dasharray="${j===current-1?'':'4 2'}"/>`).join('');
+  };
+  section.querySelector('.prev-step').onclick=()=>{if(current>0){current--;update()}};
+  section.querySelector('.next-step').onclick=()=>{if(current<steps.length){current++;update()}};
+  update();
+ }
+ if(r.stats)$('solverStatus').textContent+=` · Rechenzeit: ${fmt(r.stats.ms/1000)} s · Teilegruppenprüfungen: ${r.stats.oracleCalls}`;
+}
+function finishExact(){if(exactWorker){exactWorker.terminate();exactWorker=null;}$('calculate').disabled=false;$('stop').disabled=true}
+$('calculate').onclick=()=>{
+ try{
+  if(exactWorker)return;
+  const input=readInput();
+  const count=input.parts.reduce((a,p)=>a+p.q,0);
+  if(count>15)throw Error('Der exakte Solver unterstützt höchstens 15 Einzelteile (Summe der Stückzahlen).');
+  const {scaled,factor}=scaleExactInput(input);
+  const seconds=Number($('seconds').value);if(!Number.isInteger(seconds)||seconds<1||seconds>3600)throw Error('Zeitlimit: 1 bis 3600 Sekunden eingeben.');
+  input.preferRests=$('preferRests').checked;
+  $('results').classList.remove('hidden');$('solverStatus').textContent='Berechnung läuft …';$('summary').innerHTML='';$('boards').innerHTML='';
+  const blob=new Blob([document.getElementById('worker-source').textContent],{type:'application/javascript'});
+  const url=URL.createObjectURL(blob);exactWorker=new Worker(url);URL.revokeObjectURL(url);
+  $('calculate').disabled=true;$('stop').disabled=false;
+  exactWorker.onmessage=e=>{const data=e.data;finishExact();if(data.error){$('solverStatus').textContent='Berechnungsfehler: '+data.error;return;}showExact(unscaleExactResult(data.result,factor),input)};
+  exactWorker.onerror=e=>{finishExact();$('solverStatus').textContent='Fehler im Berechnungskern: '+e.message};
+  exactWorker.postMessage({input:scaled,opts:{maxMs:seconds*1000,oracleMs:seconds*1000,preferRests:input.preferRests}});
+ }catch(e){finishExact();$('results').classList.remove('hidden');$('solverStatus').textContent=e.message;}
+};
+$('stop').onclick=()=>{finishExact();$('solverStatus').textContent='Berechnung abgebrochen – keine Optimalitätsaussage.'};
+</script><script id="worker-source" type="text/plain">
+/* Exact slicing-tree feasibility solver, integer millimetres, one rectangular stock.
+   Complete only if result.status is 'impossible' or 'solved'. Budget exhaustion = 'unknown'.
+   Guillotine cuts are represented as binary joins; all joints incur kerf + safety.
+   Each subset retains Pareto-minimal bounding boxes, sufficient for feasibility.
+*/
+(function(root){
+'use strict';
+function solve(input, opts={}) {
+ const t0=Date.now(), maxMs=opts.maxMs??60000, maxStates=opts.maxStates??800000, maxOps=opts.maxOps??250000000;
+ const pieces=[];
+ for(const p of input.parts||[])for(let i=0;i<(p.q??1);i++)pieces.push({id:p.id,w:+p.w,h:+p.h,rot:!!p.rot});
+ const n=pieces.length, stocks=[...(input.stocks||[]).filter(s=>s.mode!=='limited'||s.qty>0),...(input.rests||[]).filter(s=>(s.q??s.qty??1)>0)];
+ if(!n||n>15||!stocks.length)return {status:'unsupported',reason:'Benötigt 1–15 Einzelteile und mindestens eine verfügbare Platte'};
+ if(pieces.some(p=>!Number.isInteger(p.w)||!Number.isInteger(p.h)||p.w<=0||p.h<=0))return {status:'unsupported',reason:'Ungültige Teileabmessungen'};
+ if(stocks.some(s=>!Number.isInteger(s.w)||!Number.isInteger(s.h)||s.w<=0||s.h<=0))return {status:'unsupported',reason:'Ungültige Plattenabmessungen'};
+ const k=+(input.kerf??0)+ +(input.safety??0);
+ if(!Number.isInteger(k)||k<0)return {status:'unsupported',reason:'Ungültige Schnittzugabe'};
+ let ops=0,states=0,exhausted=false;
+ const N=1<<n, dp=new Array(N), maxW=Math.max(...stocks.map(s=>s.w)),maxH=Math.max(...stocks.map(s=>s.h));
+ const abort=()=>{if((++ops&2047)===0 && (Date.now()-t0>maxMs || states>maxStates || ops>maxOps)){exhausted=true;return true;}return false;};
+ function add(front,c){
+   if(c.w>maxW||c.h>maxH)return;
+   for(const v of front)if(v.w<=c.w&&v.h<=c.h)return;
+   for(let i=front.length-1;i>=0;i--)if(c.w<=front[i].w&&c.h<=front[i].h){front[i]=front[front.length-1];front.pop();states--;}
+   front.push(c);states++;
+ }
+ for(let i=0;i<n;i++){
+   const p=pieces[i], a=[];
+   add(a,{w:p.w,h:p.h,type:'part',index:i});
+   if(p.rot&&p.w!==p.h)add(a,{w:p.h,h:p.w,type:'part',index:i,rotated:true});
+   dp[1<<i]=a;
+ }
+ const popcount=m=>{let c=0;while(m){m&=m-1;c++;}return c;};
+ // Enumerate by subset size so both children are ready.
+ outer:for(let size=2;size<=n;size++){
+   for(let mask=1;mask<N;mask++){
+     if(popcount(mask)!==size)continue;
+     const out=[];let low=mask&-mask;
+     for(let a=(mask-1)&mask;a;a=(a-1)&mask){
+       if(!(a&low))continue; // symmetric partitions
+       const b=mask^a, left=dp[a]||[],right=dp[b]||[];
+       for(const x of left)for(const y of right){
+         add(out,{w:x.w+y.w+k,h:Math.max(x.h,y.h),type:'v',a:x,b:y});
+         add(out,{w:Math.max(x.w,y.w),h:x.h+y.h+k,type:'h',a:x,b:y});
+         if(abort())break outer;
+       }
+     }
+     dp[mask]=out;
+     if(states>maxStates){exhausted=true;break outer;}
+   }
+ }
+ const full=dp[N-1]||[];
+ // Prefer a large continuous rectangular offcut when several guillotine
+ // trees fit the same sheet. This is a tie-break only: it never changes
+ // whether a subset is feasible or the primary board assignment objective.
+ const layoutScore=(v,s)=>Math.max((s.w-v.w)*s.h,s.w*(s.h-v.h));
+ let found=null,stock=null;
+ for(const s of stocks){for(const v of full){if(v.w<=s.w&&v.h<=s.h){if(!found||s.w*s.h<stock.w*stock.h||(s.w*s.h===stock.w*stock.h&&layoutScore(v,s)>layoutScore(found,stock))){found=v;stock=s;}}}}
+ function tree(node){if(node.type==='part')return {type:'part',id:pieces[node.index].id,index:node.index,w:node.w,h:node.h,rotated:!!node.rotated};return {type:node.type,w:node.w,h:node.h,a:tree(node.a),b:tree(node.b)};}
+ return {status:found?'solved':exhausted?'unknown':'impossible',stock:found?{w:stock.w,h:stock.h,id:stock.id}:undefined,tree:found?tree(found):undefined,stats:{n,states,ops,ms:Date.now()-t0,exhausted}};
+}
+root.GuillotineExact={solve};
+if(typeof module!=='undefined')module.exports={solve};
+})(typeof globalThis!=='undefined'?globalThis:this);
+
+/* Multi-board exact assignment, bounded enumeration for <= 15 individual pieces.
+   Each candidate subset is checked by the independent exact guillotine oracle.
+   Exhaustive optimality is claimed only when no oracle call returns unknown and no budget is exhausted.
+*/
+'use strict';
+const guillotine=GuillotineExact.solve;
+function solve(input,opts={}){
+ const start=Date.now(),limit=opts.maxMs??30000,oracleMs=opts.oracleMs??3000;
+ const parts=[];
+ for(const p of input.parts||[]){if(!Number.isInteger(p.q??1)||(p.q??1)<1)return {status:'unsupported',reason:'Invalid quantity'};for(let i=0;i<(p.q??1);i++)parts.push({...p,q:1});}
+ const n=parts.length;
+ if(!Number.isInteger(input.kerf??0)||!Number.isInteger(input.safety??0)||(input.kerf??0)<0||(input.safety??0)<0)return {status:'unsupported',reason:'Invalid kerf or safety'};
+ if(!n||n>15)return {status:'unsupported',reason:'Supports 1–15 individual parts'};
+ if(parts.some(p=>!Number.isInteger(p.w)||!Number.isInteger(p.h)||p.w<=0||p.h<=0))return {status:'unsupported',reason:'Invalid part dimensions'};
+ const preferRests=!!(opts.preferRests??input.preferRests);
+ const boards=[];
+ for(const [kind,items] of [['stock',input.stocks||[]],['rest',input.rests||[]]])for(const s of items){
+  if(!Number.isInteger(s.w)||!Number.isInteger(s.h)||s.w<=0||s.h<=0)return {status:'unsupported',reason:'Invalid board dimensions'};
+  const q=kind==='rest'?(s.q??s.qty??1):(s.mode==='limited'?(s.qty??0):n);
+  if(!Number.isInteger(q)||q<0)return {status:'unsupported',reason:'Invalid stock quantity'};
+  for(let j=0;j<Math.min(q,n);j++)boards.push({kind,id:s.id,w:s.w,h:s.h,ordinal:j});
+ }
+ if(!boards.length)return {status:'impossible',reason:'No boards'};
+ if(boards.length>240)return {status:'unsupported',reason:'Too many board instances (240)'};
+ const full=(1<<n)-1,area=parts.reduce((s,p)=>s+p.w*p.h,0);
+ const memo=new Map(),oracleCache=new Map(),impossibleSubsets=new Map();let calls=0,unknown=false,timedOut=false,monotonePrunes=0;
+ const areas=parts.map(p=>p.w*p.h);const areaMask=new Float64Array(1<<n);for(let m=1;m<(1<<n);m++){const bit=m&-m;areaMask[m]=areaMask[m^bit]+areas[31-Math.clz32(bit)];}
+ // Necessary geometric filter: each part must fit the selected board in an allowed orientation.
+ const fitsPart=(p,b)=>(p.w<=b.w&&p.h<=b.h)||(!!p.rot&&p.h<=b.w&&p.w<=b.h);
+ const fitMasks=boards.map(b=>parts.reduce((m,p,i)=>m|(fitsPart(p,b)?1<<i:0),0));
+ const keyBoard=b=>`${b.w}x${b.h}`;
+ function candidate(b,mask){
+  const key=keyBoard(b)+'|'+mask;
+  if(oracleCache.has(key))return oracleCache.get(key);
+  // Monotonicity: if a subset cannot be cut from this rectangle,
+  // adding further pieces cannot make it feasible. Only proven
+  // impossible subsets are used; timeouts never enter this cache.
+  const rejected=impossibleSubsets.get(keyBoard(b));
+  if(rejected && rejected.some(m=>(mask&m)===m)){monotonePrunes++;return false;}
+  if(Date.now()-start>limit){timedOut=true;return null;}
+  const group=parts.filter((_,i)=>mask&(1<<i));
+  if(areaMask[mask]>b.w*b.h || parts.some((p,i)=>(mask&(1<<i))&&!fitsPart(p,b))){oracleCache.set(key,false);return false;}
+  const r=guillotine({stocks:[{id:b.id,w:b.w,h:b.h,mode:'limited',qty:1}],parts:group,kerf:input.kerf,safety:input.safety},{maxMs:Math.min(oracleMs,Math.max(1,limit-(Date.now()-start))),maxOps:opts.maxOps??250000000});
+  calls++;
+  if(r.status==='unknown'){unknown=true;return null;}
+  const ans=r.status==='solved'?{tree:r.tree,stats:r.stats}:false;
+  if(r.status==='unsupported'){unknown=true;return null;}
+  oracleCache.set(key,ans);
+  if(ans===false){const dims=keyBoard(b);if(!impossibleSubsets.has(dims))impossibleSubsets.set(dims,[]);impossibleSubsets.get(dims).push(mask);}
+  return ans;
+ }
+ // With rest preference: (1) minimise new stock boards, (2) maximise
+ // finished-part area cut from existing rests, (3) minimise board area,
+ // (4) minimise board count. The old second criterion (total board area)
+ // incorrectly rejected useful rests whenever a new stock was still needed.
+ let best=null,bestCost=Infinity,bestCount=Infinity,bestNew=Infinity,bestRestArea=-1;
+ const better=(cost,count,newCount,restArea)=>preferRests?
+   (newCount<bestNew || (newCount===bestNew && (restArea>bestRestArea ||
+    (restArea===bestRestArea && (cost<bestCost || (cost===bestCost && count<bestCount)))))):
+   (cost<bestCost || (cost===bestCost && count<bestCount));
+ function dfs(remaining,used,selected,cost,newCount,restArea){
+  if(Date.now()-start>limit){timedOut=true;return;}
+  if(!remaining){if(better(cost,selected.length,newCount,restArea)){
+   bestCost=cost;bestCount=selected.length;bestNew=newCount;bestRestArea=restArea;best=selected.slice();
+  }return;}
+  let availableArea=0,unionFits=0,remainingRestFits=0;
+  for(let i=0;i<boards.length;i++)if(!(used&(1n<<BigInt(i)))){
+   availableArea+=boards[i].w*boards[i].h;
+   unionFits|=fitMasks[i];
+   if(boards[i].kind==='rest')remainingRestFits|=fitMasks[i];
+  }
+  if(areaMask[remaining]>availableArea || (remaining&~unionFits))return;
+  if(best){
+   if(preferRests){
+    if(newCount>bestNew)return;
+    // An admissible upper bound: even with unlimited space, only pieces
+    // that individually fit an unused rest can increase rest utilisation.
+    const possibleRestArea=restArea+areaMask[remaining&remainingRestFits];
+    if(newCount===bestNew && possibleRestArea<bestRestArea)return;
+    if(newCount===bestNew && possibleRestArea===bestRestArea && cost+areaMask[remaining]>bestCost)return;
+   }else if(cost+areaMask[remaining]>bestCost)return;
+  }
+  if(!preferRests){
+   let minNextArea=Infinity;
+   for(let i=0;i<boards.length;i++)if(!(used&(1n<<BigInt(i))) && (fitMasks[i]&remaining))
+    minNextArea=Math.min(minNextArea,boards[i].w*boards[i].h);
+   if(best && cost+minNextArea>bestCost)return;
+  }
+  const state=remaining+'|'+used;
+  const score=preferRests?[newCount,-restArea,cost,selected.length]:[cost,selected.length];
+  const prev=memo.get(state);
+  // Lexicographic dominance is safe for the same remaining parts and
+  // identical set of already used physical boards.
+  if(prev){
+   let dominates=true;
+   for(let k=0;k<score.length;k++){
+    if(prev[k]<score[k])break;
+    if(prev[k]>score[k]){dominates=false;break;}
+   }
+   if(dominates)return;
+  }
+  memo.set(state,score);
+  const pivot=remaining&-remaining;
+  for(let j=0;j<boards.length;j++){
+   if(used&(1n<<BigInt(j)))continue;
+   const b=boards[j],newCost=cost+b.w*b.h;
+   const newStockCount=newCount+(b.kind==='stock'?1:0);
+   if(preferRests){if(newStockCount>bestNew)continue;}
+   else if(newCost>bestCost||(newCost===bestCost&&selected.length+1>=bestCount))continue;
+   if(!(fitMasks[j]&pivot))continue;
+   if(boards.slice(0,j).some((v,i)=>!(used&(1n<<BigInt(i)))&&v.w===b.w&&v.h===b.h&&v.kind===b.kind))continue;
+   for(let sub=remaining;sub;sub=(sub-1)&remaining){
+    if(!(sub&pivot)||(sub&~fitMasks[j]))continue;
+    const c=candidate(b,sub);
+    if(c)dfs(remaining^sub,used|(1n<<BigInt(j)),[...selected,{board:b,mask:sub,tree:c.tree}],newCost,newStockCount,restArea+(b.kind==='rest'?areaMask[sub]:0));
+    if(timedOut)return;
+   }
+  }
+ }
+ // BigInt bitmask supports multiple unlimited stock types without 32-bit overflow.
+ dfs(full,0n,[],0,0,0);
+ return {status:best?(unknown||timedOut?'feasible':'optimal'):(unknown||timedOut?'unknown':'impossible'),objective:best?{boardArea:bestCost,boardCount:bestCount,newStockCount:bestNew,partArea:area,restPartArea:bestRestArea,preferRests}:undefined,placements:best?.map(x=>({board:x.board,partIndices:parts.map((_,i)=>i).filter(i=>x.mask&(1<<i)),tree:x.tree})),stats:{n,boards:boards.length,oracleCalls:calls,cached:oracleCache.size,monotonePrunes,ms:Date.now()-start,unknown,timedOut}};
+}
+self.MultiExact={solve};
+
+
+self.onmessage=e=>{try{const {input,opts}=e.data;self.postMessage({result:self.MultiExact.solve(input,opts)})}catch(error){self.postMessage({error:String(error.stack||error)})}};
 </script></body></html>
